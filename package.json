@@ -1,7 +1,7 @@
 {
-  "name": "love-letter-server",
+  "name": "game-hub-server",
   "version": "1.0.0",
-  "description": "情書桌遊連線對戰伺服器",
+  "description": "通用桌遊連線對戰伺服器 - 支援多種遊戲",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
