@@ -1,0 +1,13 @@
+{
+  "name": "love-letter-server",
+  "version": "1.0.0",
+  "description": "情書桌遊連線對戰伺服器",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
