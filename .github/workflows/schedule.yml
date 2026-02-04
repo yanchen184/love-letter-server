@@ -1,0 +1,53 @@
+name: Railway Schedule Control
+
+on:
+  schedule:
+    # 每天 09:00 (台灣時間) 啟動 = UTC 01:00
+    - cron: '0 1 * * *'
+    # 每天 24:00 (台灣時間) 關閉 = UTC 16:00
+    - cron: '0 16 * * *'
+  workflow_dispatch:  # 手動觸發
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'start'
+        type: choice
+        options:
+          - start
+          - stop
+
+jobs:
+  start-server:
+    if: github.event.schedule == '0 1 * * *' || (github.event_name == 'workflow_dispatch' && inputs.action == 'start')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Link and Start Server
+        run: |
+          railway link --project love-letter-server
+          railway up
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  stop-server:
+    if: github.event.schedule == '0 16 * * *' || (github.event_name == 'workflow_dispatch' && inputs.action == 'stop')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Link and Stop Server
+        run: |
+          railway link --project love-letter-server
+          railway down
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
