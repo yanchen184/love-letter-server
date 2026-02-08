@@ -1,13 +1,14 @@
 {
   "name": "game-hub-server",
-  "version": "1.0.0",
-  "description": "通用桌遊連線對戰伺服器 - 支援多種遊戲",
+  "version": "2.0.0",
+  "description": "通用桌遊連線對戰伺服器 - 支援 Love Letter 和 Memory Battle",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "ws": "^8.16.0",
+    "uuid": "^9.0.1"
   }
 }
