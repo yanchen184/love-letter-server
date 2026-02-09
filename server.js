@@ -25,6 +25,24 @@ const rooms = new Map();
 // Memory Battle 專用 - 等待配對的房間
 const memoryBattleQueue = new Map(); // gridSize -> roomId
 
+// 清理配置
+const CLEANUP_CONFIG = {
+  INTERVAL_MS: 5 * 60 * 1000, // 每 5 分鐘檢查一次
+  IDLE_TIMEOUT_MS: 15 * 60 * 1000, // 15 分鐘無活動視為閒置
+  EMPTY_TIMEOUT_MS: 2 * 60 * 1000, // 2 分鐘沒人自動刪除
+};
+
+// 房間最後活動時間記錄
+const roomActivity = new Map(); // roomId -> timestamp
+
+// 斷線重連配置
+const RECONNECT_CONFIG = {
+  TIMEOUT_MS: 30 * 1000, // 30 秒內可重連
+};
+
+// 斷線玩家記錄
+const disconnectedPlayers = new Map(); // playerId -> { roomId, disconnectTime, playerData }
+
 // 建立 HTTP 伺服器
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -90,6 +108,7 @@ class GameRoom {
     this.sockets = new Map(); // playerId -> WebSocket
     this.hostId = null;
     this.turnTimer = null;
+    this.createdAt = Date.now(); // 記錄創建時間
 
     // 根據遊戲類型建立遊戲實例
     if (gameType === 'memory-battle') {
@@ -99,6 +118,9 @@ class GameRoom {
       const GameClass = games[gameType]?.LoveLetterGame || games['love-letter'].LoveLetterGame;
       this.game = new GameClass(roomId);
     }
+
+    // 初始化活動時間
+    updateRoomActivity(roomId);
   }
 
   addPlayer(playerId, playerName, socket, isHost, avatar) {
@@ -152,6 +174,9 @@ class GameRoom {
 
 function handleMemoryBattleAction(room, ws, action, data, playerId) {
   const game = room.game;
+
+  // 記錄房間活動
+  updateRoomActivity(room.roomId);
 
   switch (action) {
     case 'FLIP_CARD': {
@@ -489,7 +514,46 @@ wss.on('connection', (ws, req) => {
       if (gameType === 'memory-battle') {
         switch (msg.type) {
           case 'JOIN_GAME': {
-            const { playerName, avatar, gridSize } = msg.payload || msg.data || {};
+            const { playerName, avatar, gridSize, reconnectPlayerId } = msg.payload || msg.data || {};
+            
+            // 檢查是否為重連
+            const disconnectInfo = reconnectPlayerId ? disconnectedPlayers.get(reconnectPlayerId) : null;
+            
+            if (disconnectInfo) {
+              // 重連邏輯
+              playerId = reconnectPlayerId;
+              const room = rooms.get(disconnectInfo.roomId);
+              
+              if (room) {
+                // 恢復連接
+                room.sockets.set(playerId, ws);
+                disconnectedPlayers.delete(playerId);
+                currentRoom = room;
+                roomId = room.roomId;
+
+                console.log(`[Reconnect] 玩家 ${playerId} 重連成功`);
+
+                // 發送當前遊戲狀態
+                ws.send(JSON.stringify({
+                  type: 'RECONNECTED',
+                  playerId,
+                  roomId: room.roomId,
+                  roomState: room.game.getPublicState(),
+                  message: '重連成功！',
+                }));
+
+                // 通知其他玩家
+                room.broadcast({
+                  type: 'PLAYER_RECONNECTED',
+                  playerId,
+                  playerName: disconnectInfo.playerData.name,
+                  message: '玩家重新連線',
+                });
+                break;
+              }
+            }
+
+            // 正常加入
             playerId = uuidv4();
 
             // 自動配對
@@ -638,19 +702,57 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (currentRoom && playerId) {
       const player = currentRoom.game.players.get(playerId);
-      currentRoom.removePlayer(playerId);
+      
+      // 記錄斷線玩家，允許 30 秒內重連
+      disconnectedPlayers.set(playerId, {
+        roomId: currentRoom.roomId,
+        disconnectTime: Date.now(),
+        playerData: {
+          id: playerId,
+          name: player?.name,
+          avatar: player?.avatar,
+          score: player?.score,
+        },
+      });
+
+      console.log(`[Reconnect] 玩家 ${playerId} 斷線，保留 ${RECONNECT_CONFIG.TIMEOUT_MS / 1000} 秒`);
+
+      // 通知其他玩家（但不移除）
       currentRoom.broadcast({
-        type: 'PLAYER_LEFT',
+        type: 'PLAYER_DISCONNECTED',
         playerId,
         playerName: player?.name,
-        roomState: currentRoom.game?.getPublicState?.() || null,
+        message: '玩家斷線，等待重連...',
       });
-      if (currentRoom.game.playerCount === 0) {
-        rooms.delete(currentRoom.roomId);
-        if (gameType === 'memory-battle') {
-          memoryBattleQueue.delete(currentRoom.game.gridSize);
+
+      // 設定超時清理
+      setTimeout(() => {
+        const disconnectInfo = disconnectedPlayers.get(playerId);
+        if (disconnectInfo) {
+          // 超過時間仍未重連，正式移除
+          disconnectedPlayers.delete(playerId);
+          
+          const room = rooms.get(disconnectInfo.roomId);
+          if (room) {
+            room.removePlayer(playerId);
+            room.broadcast({
+              type: 'PLAYER_LEFT',
+              playerId,
+              playerName: disconnectInfo.playerData.name,
+              roomState: room.game?.getPublicState?.() || null,
+            });
+
+            if (room.game.playerCount === 0) {
+              rooms.delete(room.roomId);
+              if (gameType === 'memory-battle') {
+                memoryBattleQueue.delete(room.game.gridSize);
+              }
+            }
+          }
+
+          console.log(`[Reconnect] 玩家 ${playerId} 重連超時，已移除`);
         }
-      }
+      }, RECONNECT_CONFIG.TIMEOUT_MS);
     }
     console.log(`[${new Date().toISOString()}] Disconnected: ${gameType}/${roomId}`);
   });
@@ -662,6 +764,92 @@ wss.on('connection', (ws, req) => {
   }));
 });
 
+// ============================================
+// 記憶體清理系統
+// ============================================
+
+/**
+ * 清理空房間和長時間無活動的房間
+ */
+function cleanupRooms() {
+  const now = Date.now();
+  const roomsToDelete = [];
+
+  for (const [roomId, room] of rooms) {
+    const lastActivity = roomActivity.get(roomId) || room.createdAt || now;
+    const idleTime = now - lastActivity;
+
+    // 情況 1：房間完全沒人 → 2 分鐘後刪除
+    if (room.game.playerCount === 0) {
+      if (idleTime > CLEANUP_CONFIG.EMPTY_TIMEOUT_MS) {
+        roomsToDelete.push({ roomId, reason: '無玩家' });
+      }
+    }
+    // 情況 2：房間超過 15 分鐘無活動 → 自動刪除
+    else if (idleTime > CLEANUP_CONFIG.IDLE_TIMEOUT_MS) {
+      roomsToDelete.push({ roomId, reason: '長時間無活動' });
+    }
+  }
+
+  // 刪除房間
+  for (const { roomId, reason } of roomsToDelete) {
+    const room = rooms.get(roomId);
+    if (room) {
+      // 通知所有玩家
+      room.broadcast({
+        type: 'ROOM_CLOSED',
+        reason: `房間已關閉：${reason}`,
+      });
+
+      // 清理計時器
+      if (room.turnTimer) {
+        clearInterval(room.turnTimer);
+      }
+
+      // 刪除記錄
+      rooms.delete(roomId);
+      roomActivity.delete(roomId);
+
+      // 如果是 Memory Battle 等待房間，也清理
+      if (room.gameType === 'memory-battle') {
+        for (const [gridSize, queuedRoomId] of memoryBattleQueue) {
+          if (queuedRoomId === roomId) {
+            memoryBattleQueue.delete(gridSize);
+          }
+        }
+      }
+
+      console.log(`[Cleanup] 已刪除房間 ${roomId} - ${reason}`);
+    }
+  }
+
+  if (roomsToDelete.length > 0) {
+    console.log(`[Cleanup] 清理完成：刪除 ${roomsToDelete.length} 個房間`);
+  }
+}
+
+/**
+ * 更新房間活動時間
+ */
+function updateRoomActivity(roomId) {
+  roomActivity.set(roomId, Date.now());
+}
+
+/**
+ * 啟動清理定時器
+ */
+function startCleanupTimer() {
+  setInterval(() => {
+    cleanupRooms();
+  }, CLEANUP_CONFIG.INTERVAL_MS);
+
+  console.log(`[Cleanup] 自動清理系統已啟動（每 ${CLEANUP_CONFIG.INTERVAL_MS / 60000} 分鐘檢查一次）`);
+}
+
+// ============================================
+// 伺服器啟動
+// ============================================
+
 // 啟動伺服器
 server.listen(PORT, () => {
   console.log(`
@@ -671,6 +859,10 @@ server.listen(PORT, () => {
 ║  Port: ${PORT}                                ║
 ║  Games: ${Object.keys(games).join(', ').padEnd(31)}║
 ║  Status: Running                          ║
+║  Cleanup: Auto (every ${CLEANUP_CONFIG.INTERVAL_MS / 60000} min)          ║
 ╚═══════════════════════════════════════════╝
   `);
+
+  // 啟動清理系統
+  startCleanupTimer();
 });
