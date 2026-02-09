@@ -308,8 +308,9 @@ class MemoryBattleGame {
         isFlipped: c.isFlipped,
         isMatched: c.isMatched,
         matchedBy: c.matchedBy, // 傳送配對者資訊
-        symbol: (c.isFlipped || c.isMatched) ? c.symbol : null,
-        symbolId: (c.isFlipped || c.isMatched) ? c.symbolId : null,
+        // ✅ FIX: 總是發送 symbol 和 symbolId（前端需要顯示卡片背面）
+        symbol: c.symbol,
+        symbolId: c.symbolId,
       })),
       currentPlayerIndex: this.currentPlayerIndex,
       matchedPairs: this.matchedPairs,
