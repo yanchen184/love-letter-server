@@ -141,6 +141,7 @@ class MemoryBattleGame {
 
   startGame() {
     if (this.players.size !== 2) {
+      console.log('[Memory Battle] Cannot start game: Not enough players', this.players.size);
       return false;
     }
 
@@ -158,6 +159,14 @@ class MemoryBattleGame {
     // 生成卡片
     this.cards = generateCards(this.gridSize);
     this.totalPairs = GRID_CONFIGS[this.gridSize].totalPairs;
+    
+    console.log('[Memory Battle] Game started!', {
+      roomId: this.roomId,
+      gridSize: this.gridSize,
+      cardsGenerated: this.cards.length,
+      totalPairs: this.totalPairs,
+      players: Array.from(this.players.keys()),
+    });
 
     return true;
   }
