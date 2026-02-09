@@ -65,6 +65,7 @@ function generateCards(gridSize) {
       symbol: symbol.symbol,
       isFlipped: false,
       isMatched: false,
+      matchedBy: null, // 追蹤配對者（玩家索引 0/1）
     });
     cards.push({
       id: index * 2 + 1,
@@ -72,6 +73,7 @@ function generateCards(gridSize) {
       symbol: symbol.symbol,
       isFlipped: false,
       isMatched: false,
+      matchedBy: null, // 追蹤配對者（玩家索引 0/1）
     });
   });
 
@@ -220,6 +222,8 @@ class MemoryBattleGame {
     if (isMatch) {
       card1.isMatched = true;
       card2.isMatched = true;
+      card1.matchedBy = this.currentPlayerIndex; // 記錄配對者
+      card2.matchedBy = this.currentPlayerIndex; // 記錄配對者
       this.matchedPairs++;
 
       const currentPlayer = this.getCurrentPlayer();
@@ -303,6 +307,7 @@ class MemoryBattleGame {
         id: c.id,
         isFlipped: c.isFlipped,
         isMatched: c.isMatched,
+        matchedBy: c.matchedBy, // 傳送配對者資訊
         symbol: (c.isFlipped || c.isMatched) ? c.symbol : null,
         symbolId: (c.isFlipped || c.isMatched) ? c.symbolId : null,
       })),
